@@ -34,6 +34,9 @@ protected:
   uint32_t      frameCount{ 0 };
   ovrVector3f   eyeOffsets[2];
   EyeParams     eyesParams[2];
+  ovrGLTexture* mirrorTexture{ nullptr };
+  bool          mirrorEnabled{ true };
+
 
   bool          eyePerFrameMode{ false };
   ovrEyeType    currentEye{ ovrEye_Count };
@@ -56,6 +59,7 @@ protected:
   virtual void drawRiftFrame() final;
   virtual void perFrameRender() {};
   virtual void perEyeRender() {};
+  virtual void setupMirror(const glm::uvec2 & size);
 
 public:
   RiftRenderingApp();

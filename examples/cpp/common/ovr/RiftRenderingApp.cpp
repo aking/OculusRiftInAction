@@ -28,6 +28,19 @@ void RiftRenderingApp::initializeRiftRendering() {
   });
 }
 
+void RiftRenderingApp::setupMirror(const glm::uvec2 & size) {
+  if (mirrorTexture) {
+    ovrHmd_DestroyMirrorTexture(hmd, (ovrTexture*)mirrorTexture);
+    mirrorTexture = nullptr;
+  }
+
+  if (mirrorEnabled) {
+    ovrHmd_CreateMirrorTextureGL(hmd, GL_RGBA, size.x, size.y, (ovrTexture**)&mirrorTexture);
+  }
+
+}
+
+
 RiftRenderingApp::RiftRenderingApp() : layers(1) {
   Platform::sleepMillis(200);
   if (!ovrHmd_ConfigureTracking(hmd,
