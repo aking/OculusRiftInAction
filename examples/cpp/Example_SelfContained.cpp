@@ -115,119 +115,6 @@ using glm::quat;
 //
 
 #include <GL/glew.h>
-#include <OVR_CAPI_GL.h>
-
-struct FramebufferWraper {
-    glm::uvec2 size;
-    GLuint fbo{ 0 };
-    GLuint color{ 0 };
-    GLuint depth{ 0 };
-
-    virtual ~FramebufferWraper() {
-        release();
-    }
-
-    void allocate() {
-        release();
-        glGenRenderbuffers(1, &depth);
-        assert(depth);
-        glGenTextures(1, &color);
-        assert(color);
-        glGenFramebuffers(1, &fbo);
-        assert(fbo);
-    }
-
-    void release() {
-        if (fbo) {
-            glDeleteFramebuffers(1, &fbo);
-            fbo = 0;
-        }
-        if (color) {
-            glDeleteTextures(1, &color);
-            color = 0;
-        }
-        if (depth) {
-            glDeleteRenderbuffers(1, &depth);
-            depth = 0;
-        }
-    }
-
-    static bool checkStatus(GLenum target = GL_FRAMEBUFFER) {
-        GLuint status = glCheckFramebufferStatus(target);
-        switch (status) {
-        case GL_FRAMEBUFFER_COMPLETE:
-            return true;
-            break;
-
-        case GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT:
-            std::cerr << "framebuffer incomplete attachment" << std::endl;
-            break;
-
-        case GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT:
-            std::cerr << "framebuffer missing attachment" << std::endl;
-            break;
-
-        case GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER:
-            std::cerr << "framebuffer incomplete draw buffer" << std::endl;
-            break;
-
-        case GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER:
-            std::cerr << "framebuffer incomplete read buffer" << std::endl;
-            break;
-
-        case GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE:
-            std::cerr << "framebuffer incomplete multisample" << std::endl;
-            break;
-
-        case GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS:
-            std::cerr << "framebuffer incomplete layer targets" << std::endl;
-            break;
-
-        case GL_FRAMEBUFFER_UNSUPPORTED:
-            std::cerr << "framebuffer unsupported internal format or image" << std::endl;
-            break;
-
-        default:
-            std::cerr << "other framebuffer error" << std::endl;
-            break;
-        }
-
-        return false;
-    }
-
-    void init(const glm::ivec2 & size) {
-        this->size = size;
-        allocate();
-
-        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-
-        glBindTexture(GL_TEXTURE_2D, color);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, size.x, size.y);
-        glBindTexture(GL_TEXTURE_2D, 0);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color, 0);
-
-        glBindRenderbuffer(GL_RENDERBUFFER, depth);
-        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, size.x, size.y);
-        glBindRenderbuffer(GL_RENDERBUFFER, 0);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth);
-
-        if (!checkStatus()) {
-            FAIL("Could not create a valid framebuffer");
-        }
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    }
-
-    void activate() {
-        assert(fbo);
-        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-        glViewport(0, 0, size.x, size.y);
-    }
-};
-
 //////////////////////////////////////////////////////////////////////
 //
 // GLFW provides cross platform window creation
@@ -318,41 +205,7 @@ namespace glfw {
 
 }
 
-
-// For interaction with the Rift, on some platforms we require
-// native window handles, so we need to define some symbols and
-// include a special header to allow us to get them from GLFW
-
-#if defined(OS_WIN)
-#define GLFW_EXPOSE_NATIVE_WIN32
-#define GLFW_EXPOSE_NATIVE_WGL
-#elif defined(OS_OSX)
-#define GLFW_EXPOSE_NATIVE_COCOA
-#define GLFW_EXPOSE_NATIVE_NSGL
-#elif defined(OS_LINUX)
-#define GLFW_EXPOSE_NATIVE_X11
-#define GLFW_EXPOSE_NATIVE_GLX
-#endif
-
-#include <GLFW/glfw3native.h>
-
-namespace glfw {
-
-    inline void * getNativeWindowHandle(GLFWwindow * window) {
-        void * nativeWindowHandle = nullptr;
-        ON_WINDOWS([&] {
-            nativeWindowHandle = (void*)glfwGetWin32Window(window);
-        });
-        ON_LINUX([&] {
-            nativeWindowHandle = (void*)glfwGetX11Window(window);
-        });
-        ON_MAC([&] {
-            nativeWindowHandle = (void*)glfwGetCocoaWindow(window);
-        });
-        return nativeWindowHandle;
-    }
-}
-
+extern "C" double ovr_GetTimeInSeconds();
 
 class RateCounter {
     std::vector<float> times;
@@ -381,6 +234,60 @@ public:
         return (times.size() - 1) / elapsed();
     }
 };
+
+
+//typedef void (APIENTRY *GLDEBUGPROC)(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, GLvoid* userParam);
+
+void APIENTRY glDebugCallback(
+    GLenum source,
+    GLenum type,
+    GLuint id,
+    GLenum severity,
+    GLsizei length,
+    const GLchar * message,
+    void * userParam) {
+    const char * typeStr = "?";
+    switch (type) {
+    case GL_DEBUG_TYPE_ERROR:
+        typeStr = "ERROR";
+        break;
+    case GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR:
+        typeStr = "DEPRECATED_BEHAVIOR";
+        break;
+    case GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR:
+        typeStr = "UNDEFINED_BEHAVIOR";
+        break;
+    case GL_DEBUG_TYPE_PORTABILITY:
+        typeStr = "PORTABILITY";
+        break;
+    case GL_DEBUG_TYPE_PERFORMANCE:
+        typeStr = "PERFORMANCE";
+        break;
+    case GL_DEBUG_TYPE_OTHER:
+        typeStr = "OTHER";
+        break;
+    }
+
+    const char * severityStr = "?";
+    switch (severity) {
+    case GL_DEBUG_SEVERITY_LOW:
+        severityStr = "LOW";
+        break;
+    case GL_DEBUG_SEVERITY_MEDIUM:
+        severityStr = "MEDIUM";
+        break;
+    case GL_DEBUG_SEVERITY_HIGH:
+        severityStr = "HIGH";
+        break;
+    }
+    OutputDebugStringA("--- OpenGL Callback Message ---\n");
+    static char buffer[8192];
+    sprintf(buffer, "type: %s\nseverity: %-8s\nid: %d\nmsg: %s\n", typeStr, severityStr, id,
+        message);
+    OutputDebugStringA(buffer);
+    OutputDebugStringA("--- OpenGL Callback Message ---\n");
+}
+
 // A class to encapsulate using GLFW to handle input and render a scene
 class GlfwApp {
 
@@ -461,9 +368,7 @@ protected:
         ON_MAC([] {
             glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
         });
-#ifdef DEBUG_BUILD
         glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GL_TRUE);
-#endif
     }
 
     void postCreate() {
@@ -479,6 +384,19 @@ protected:
         glewExperimental = GL_TRUE;
         if (0 != glewInit()) {
             FAIL("Failed to initialize GLEW");
+        }
+        glGetError();
+
+        glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+        GLuint unusedIds = 0;
+        if (glDebugMessageCallback) {
+            glDebugMessageCallback(glDebugCallback, this);
+            glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE,
+                0, &unusedIds, true);
+        } else if (glDebugMessageCallbackARB) {
+            glDebugMessageCallbackARB(glDebugCallback, this);
+            glDebugMessageControlARB(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE,
+                0, &unusedIds, true);
         }
     }
 
@@ -640,52 +558,10 @@ namespace ovr {
 
 
     inline GLFWwindow * createRiftRenderingWindow(ovrHmd hmd, glm::uvec2 & outSize, glm::ivec2 & outPosition, GLFWwindow * shared = nullptr) {
-        GLFWwindow * window = nullptr;
-        bool directHmdMode = false;
-
-        outPosition = glm::ivec2(hmd->WindowsPos.x, hmd->WindowsPos.y);
         outSize = glm::uvec2(hmd->Resolution.w, hmd->Resolution.h);
-
-        // The ovrHmdCap_ExtendDesktop only reliably reports on Windows currently
-        ON_WINDOWS([&] {
-            directHmdMode = (0 == (ovrHmdCap_ExtendDesktop & hmd->HmdCaps));
-        });
-
-        // In direct HMD mode, we always use the native resolution, because the
-        // user has no control over it.
-        // In legacy mode, we should be using the current resolution of the Rift
-        // (unless we're creating a 'fullscreen' window)
-        if (!directHmdMode) {
-            GLFWmonitor * monitor = glfw::getMonitorAtPosition(outPosition);
-            if (nullptr != monitor) {
-                auto mode = glfwGetVideoMode(monitor);
-                outSize = glm::uvec2(mode->width, mode->height);
-            }
-        }
-
-        if (directHmdMode) {
-            // In direct mode, try to put the output window on a secondary screen
-            // (for easier debugging, assuming your dev environment is on the primary)
-            outSize /= 4;
-            window = glfw::createSecondaryScreenWindow(outSize, nullptr);
-        } else {
-            // If we're creating a desktop window, we should strip off any window decorations
-            // which might change the location of the rendered contents relative to the lenses.
-            //
-            // Another alternative would be to create the window in fullscreen mode, on
-            // platforms that support such a thing.
-            //      glfwWindowHint(GLFW_DECORATED, 0);
-            window = glfw::createWindow(outSize, outPosition, nullptr);
-        }
-
-        // If we're in direct mode, attach to the window
-        if (directHmdMode) {
-            void * nativeWindowHandle = glfw::getNativeWindowHandle(window);
-            if (nullptr != nativeWindowHandle) {
-                ovrHmd_AttachToWindow(hmd, nativeWindowHandle, nullptr, nullptr);
-            }
-        }
-
+        outSize /= 4;
+        GLFWwindow * window = glfw::createSecondaryScreenWindow(outSize, nullptr);
+        glfwGetWindowPos(window, &outPosition.x, &outPosition.y);
         return window;
     }
 }
@@ -693,12 +569,14 @@ namespace ovr {
 class RiftManagerApp {
 protected:
     ovrHmd hmd;
-
     uvec2 hmdNativeResolution;
-    ivec2 hmdDesktopPosition;
 
 public:
     RiftManagerApp() {
+        ovrInitParams initParams; memset(&initParams, 0, sizeof(ovrInitParams));
+        if (ovrSuccess != ovr_Initialize(nullptr)) {
+            FAIL("Failed to initialize the Oculus SDK");
+        }
     }
 
     virtual ~RiftManagerApp() {
@@ -707,15 +585,12 @@ public:
     }
 
     void initHmd(ovrHmdType defaultHmdType = ovrHmd_DK2) {
-        hmd = ovrHmd_Create(0);
-        if (nullptr == hmd) {
-            hmd = ovrHmd_CreateDebug(defaultHmdType);
-            hmdDesktopPosition = ivec2(100, 100);
-            hmdNativeResolution = uvec2(1200, 800);
-        } else {
-            hmdDesktopPosition = ivec2(hmd->WindowsPos.x, hmd->WindowsPos.y);
-            hmdNativeResolution = ivec2(hmd->Resolution.w, hmd->Resolution.h);
+        if (ovrSuccess != ovrHmd_Create(0, &hmd)) {
+            if (ovrSuccess != ovrHmd_CreateDebug(defaultHmdType, &hmd)) {
+                FAIL("Could not create HMD");
+            }
         }
+        hmdNativeResolution = ivec2(hmd->Resolution.w, hmd->Resolution.h);
     }
 
     int getEnabledCaps() {
@@ -743,19 +618,156 @@ public:
     }
 };
 
+
+#include <OVR_CAPI_GL.h>
+
+struct RiftFramebufferWrapper {
+    glm::uvec2 size;
+    ovrSwapTextureSet* textureSet;
+    GLuint fbo{ 0 };
+    GLuint depth{ 0 };
+    ovrHmd hmd;
+
+    virtual ~RiftFramebufferWrapper() {
+        release();
+    }
+
+private:
+    void allocate() {
+        ovrResult result = ovrHmd_CreateSwapTextureSetGL(hmd, GL_RGBA, size.x, size.y, &textureSet);
+        assert(ovrSuccess == result);
+        glGenRenderbuffers(1, &depth);
+        assert(depth);
+        glGenFramebuffers(1, &fbo);
+        assert(fbo);
+    }
+
+    void release() {
+        if (fbo) {
+            glDeleteFramebuffers(1, &fbo);
+            fbo = 0;
+        }
+        ovrHmd_DestroySwapTextureSet(hmd, textureSet);
+        textureSet = nullptr;
+
+        if (depth) {
+            glDeleteRenderbuffers(1, &depth);
+            depth = 0;
+        }
+    }
+
+public:
+    static bool checkStatus(GLenum target = GL_FRAMEBUFFER) {
+        GLuint status = glCheckFramebufferStatus(target);
+        switch (status) {
+        case GL_FRAMEBUFFER_COMPLETE:
+            return true;
+            break;
+
+        case GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT:
+            std::cerr << "framebuffer incomplete attachment" << std::endl;
+            break;
+
+        case GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT:
+            std::cerr << "framebuffer missing attachment" << std::endl;
+            break;
+
+        case GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER:
+            std::cerr << "framebuffer incomplete draw buffer" << std::endl;
+            break;
+
+        case GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER:
+            std::cerr << "framebuffer incomplete read buffer" << std::endl;
+            break;
+
+        case GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE:
+            std::cerr << "framebuffer incomplete multisample" << std::endl;
+            break;
+
+        case GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS:
+            std::cerr << "framebuffer incomplete layer targets" << std::endl;
+            break;
+
+        case GL_FRAMEBUFFER_UNSUPPORTED:
+            std::cerr << "framebuffer unsupported internal format or image" << std::endl;
+            break;
+
+        default:
+            std::cerr << "other framebuffer error" << std::endl;
+            break;
+        }
+
+        return false;
+    }
+
+    void init(ovrHmd hmd, const glm::ivec2 & size) {
+        this->hmd = hmd;
+        this->size = size;
+        allocate();
+
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+
+        for (int i = 0; i < textureSet->TextureCount; ++i) {
+            ovrGLTexture& tex = (ovrGLTexture&)(textureSet->Textures[i]);
+            glBindTexture(GL_TEXTURE_2D, tex.OGL.TexId);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
+
+        if (depth) {
+            glBindRenderbuffer(GL_RENDERBUFFER, depth);
+            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, size.x, size.y);
+            glBindRenderbuffer(GL_RENDERBUFFER, 0);
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+
+    void activate() {
+        assert(fbo);
+
+        ovrGLTexture& tex = (ovrGLTexture&)(textureSet->Textures[textureSet->CurrentIndex]);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex.OGL.TexId, 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth);
+        //glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depth, 0);
+        if (!checkStatus()) {
+            FAIL("Invalid FBO");
+        }
+        glViewport(0, 0, size.x, size.y);
+    }
+
+    void deactivate() {
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+
+    void increment() {
+        ++textureSet->CurrentIndex;
+        textureSet->CurrentIndex %= textureSet->TextureCount;
+    }
+};
+
+
+
 class RiftApp : public GlfwApp, public RiftManagerApp {
 public:
 
 protected:
-    ovrTexture eyeTextures[2];
     ovrVector3f eyeOffsets[2];
+//    ovrSwapTextureSet * eyeTextureSets[2];
 
 private:
     ovrEyeType currentEye{ ovrEye_Count };
     ovrEyeRenderDesc eyeRenderDescs[2];
     mat4 projections[2];
     ovrPosef eyePoses[2];
-    FramebufferWraper eyeFbos[2];
+    RiftFramebufferWrapper eyeFbos[2]; 
+    ovrLayerEyeFov layer;
+    int frameIndex{ 0 };
 
 public:
 
@@ -763,7 +775,7 @@ public:
     }
 
     virtual void configureTracking() {
-        if (!ovrHmd_ConfigureTracking(hmd,
+        if (ovrSuccess != ovrHmd_ConfigureTracking(hmd,
             ovrTrackingCap_Orientation | ovrTrackingCap_Position | ovrTrackingCap_MagYawCorrection, 0)) {
             FAIL("Could not attach to sensor device");
         }
@@ -771,52 +783,23 @@ public:
     }
 
     virtual void configureRendering() {
-        ovrGLConfig cfg;
-        memset(&cfg, 0, sizeof(cfg));
-        cfg.OGL.Header.API = ovrRenderAPI_OpenGL;
-        cfg.OGL.Header.BackBufferSize = ovr::fromGlm(windowSize);
-        cfg.OGL.Header.Multisample = 0;
-
-        int distortionCaps = 0
-            | ovrDistortionCap_Vignette
-            | ovrDistortionCap_Overdrive
-            | ovrDistortionCap_TimeWarp
-            ;
-
-        ON_LINUX([&] {
-            // This cap bit causes the SDK to properly handle the
-            // Rift in portrait mode.
-            distortionCaps |= ovrDistortionCap_LinuxDevFullscreen;
-
-            // On windows, the SDK does a good job of automatically
-            // finding the correct window.  On Linux, not so much.
-            cfg.OGL.Disp = glfwGetX11Display();
-        });
-
-        memset(eyeTextures, 0, 2 * sizeof(ovrGLTexture));
-
+        layer.Header.Type = ovrLayerType_EyeFov;
+        layer.Header.Flags = ovrLayerFlag_TextureOriginAtBottomLeft;
         ovr::for_each_eye([&](ovrEyeType eye) {
-            ovrSizei eyeTextureSize = ovrHmd_GetFovTextureSize(hmd, eye, hmd->MaxEyeFov[eye], 1.0f);
-            ovrTextureHeader & eyeTextureHeader = eyeTextures[eye].Header;
-            eyeTextureHeader.TextureSize = eyeTextureSize;
-            eyeTextureHeader.RenderViewport.Size = eyeTextureSize;
-            eyeTextureHeader.API = ovrRenderAPI_OpenGL;
-        });
-        int configResult = ovrHmd_ConfigureRendering(hmd, &cfg.Config,
-            distortionCaps, hmd->MaxEyeFov, eyeRenderDescs);
+            ovrFovPort & fov = layer.Fov[eye] = hmd->MaxEyeFov[eye];
+            ovrSizei & size = layer.Viewport[eye].Size = ovrHmd_GetFovTextureSize(hmd, eye, fov, 1.0f);
+            layer.Viewport[eye].Pos = { 0, 0 };
 
-        ovr::for_each_eye([&](ovrEyeType eye) {
-            const ovrEyeRenderDesc & erd = eyeRenderDescs[eye];
+            ovrEyeRenderDesc & erd = eyeRenderDescs[eye];
+            erd = ovrHmd_GetRenderDesc(hmd, eye, hmd->MaxEyeFov[eye]);
             ovrMatrix4f ovrPerspectiveProjection = ovrMatrix4f_Projection(erd.Fov, OVR_DEFAULT_IPD * 4, 100000.0f, true);
             projections[eye] = ovr::toGlm(ovrPerspectiveProjection);
             eyeOffsets[eye] = erd.HmdToEyeViewOffset;
 
             // Allocate the frameBuffer that will hold the scene, and then be
             // re-rendered to the screen with distortion
-            auto & eyeTextureHeader = eyeTextures[eye];
-            eyeFbos[eye].init(ovr::toGlm(eyeTextureHeader.Header.TextureSize));
-            // Get the actual OpenGL texture ID
-            ((ovrGLTexture&)eyeTextureHeader).OGL.TexId = eyeFbos[eye].color;
+            eyeFbos[eye].init(hmd, ovr::toGlm(size));
+            layer.ColorTexture[eye] = eyeFbos[eye].textureSet;
         });
     }
 
@@ -825,12 +808,6 @@ public:
 
 protected:
     virtual GLFWwindow * createRenderingTarget(uvec2 & outSize, ivec2 & outPosition) {
-        //outSize = uvec2(1920 / 5, 1080 / 5);
-        //GLFWwindow * simpleWindow = glfw::createSecondaryScreenWindow(outSize);
-        //glfwDestroyWindow(simpleWindow);
-        //glfwTerminate();
-        //ovr_Initialize();
-        //glfwInit();
         initHmd();
         return ovr::createRiftRenderingWindow(hmd, outSize, outPosition, nullptr);
     }
@@ -846,18 +823,6 @@ protected:
     }
 
     virtual void onKey(int key, int scancode, int action, int mods) {
-        static bool hswDismissed = false;
-        if (!hswDismissed) {
-            ovrHSWDisplayState hsw;
-            ovrHmd_GetHSWDisplayState(hmd, &hsw);
-            if (hsw.Displayed) {
-                ovrHmd_DismissHSWDisplay(hmd);
-                return;
-            } else {
-                hswDismissed = true;
-            }
-        }
-
         if (GLFW_PRESS == action) switch (key) {
         case GLFW_KEY_R:
             ovrHmd_RecenterPose(hmd);
@@ -868,21 +833,29 @@ protected:
     }
 
     virtual void draw() final {
-//        ovrHmd_GetEyePoses(hmd, frame, eyeOffsets, eyePoses, nullptr);
-
-        ovrHmd_BeginFrame(hmd, frame);
-        eyePoses[0] = ovrHmd_GetHmdPosePerEye(hmd, ovrEye_Left);
+        auto frameTiming = ovrHmd_GetFrameTiming(hmd, frameIndex);
+        auto trackingState = ovrHmd_GetTrackingState(hmd, ovr_GetTimeInSeconds());
+        ovr_CalcEyePoses(trackingState.HeadPose.ThePose, eyeOffsets, eyePoses);
 
         for (int i = 0; i < 2; ++i) {
             ovrEyeType eye = currentEye = hmd->EyeRenderOrder[i];
-            const ovrRecti & vp = eyeTextures[eye].Header.RenderViewport;
-
             // Render the scene to an offscreen buffer
             eyeFbos[eye].activate();
             renderScene(projections[eye], ovr::toGlm(eyePoses[eye]));
+            eyeFbos[eye].deactivate();
         }
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        ovrHmd_EndFrame(hmd, eyePoses, eyeTextures);
+        ovrLayerHeader* layers = &layer.Header;
+        ovr::for_each_eye([&](ovrEyeType eye) {
+            layer.RenderPose[eye] = eyePoses[eye];
+        });
+
+        ovrHmd_SubmitFrame(hmd, frameIndex, nullptr, &layers, 1);
+
+        ovr::for_each_eye([&](ovrEyeType eye) {
+            eyeFbos[eye].increment();
+        });
+        ++frameIndex;
     }
 
     virtual void renderScene(const glm::mat4 & projection, const glm::mat4 & headPose) = 0;
@@ -916,8 +889,6 @@ protected:
 #ifdef OVR_OS_WIN32
 #pragma warning( default : 4068 4244 4267 4065)
 #endif
-
-
 
 namespace Attribute {
     enum {
@@ -1085,11 +1056,9 @@ protected:
 MAIN_DECL{
     int result = -1;
     try {
-        if (!ovr_Initialize()) {
-          FAIL("Failed to initialize the Oculus SDK");
-        }
         result = ExampleApp().run();
     } catch (std::exception & error) {
+        OutputDebugStringA(error.what());
         std::cerr << error.what() << std::endl;
     }
     ovr_Shutdown();

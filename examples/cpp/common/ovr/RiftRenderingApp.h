@@ -20,23 +20,26 @@
 #pragma once
 
 class RiftRenderingApp : public RiftManagerApp {
-  ovrEyeType currentEye{ovrEye_Count};
-  FramebufferWrapperPtr eyeFramebuffers[2];
-  unsigned int frameCount{ 0 };
-
 protected:
-  ovrPosef eyePoses[2];
-  ovrVector3f eyeOffsets[2];
-  ovrTexture eyeTextures[2];
-  glm::mat4 projections[2];
+  struct EyeParams {
+    ovrEyeRenderDesc  renderDesc;
+    glm::uvec2        size;
+    glm::mat4         projection;
+    RiftFboPtr        fbo;
+  };
 
-  bool eyePerFrameMode{ false };
-  ovrEyeType lastEyeRendered{ ovrEye_Count };
+  using EyeLayers = std::vector<ovrLayerEye_Union>;
 
-  std::mutex * endFrameLock{ nullptr };
+  EyeLayers     layers;
+  uint32_t      frameCount{ 0 };
+  ovrVector3f   eyeOffsets[2];
+  EyeParams     eyesParams[2];
 
-private:
-  virtual void * getNativeWindow() = 0;
+  bool          eyePerFrameMode{ false };
+  ovrEyeType    currentEye{ ovrEye_Count };
+  ovrEyeType    lastEyeRendered{ ovrEye_Count };
+
+  std::mutex *  endFrameLock{ nullptr };
 
 protected:
 
@@ -45,7 +48,7 @@ protected:
   }
 
   const ovrPosef & getEyePose() const {
-    return eyePoses[currentEye];
+    return layers[0].EyeFov.RenderPose[currentEye];
   }
 
   virtual void updateFps(float fps) { }

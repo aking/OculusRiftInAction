@@ -62,43 +62,17 @@ QRiftWindow::QRiftWindow() {
 
   renderThread.setLambda([&] { renderLoop(); });
   bool directHmdMode = false;
-
-#ifdef USE_RIFT
-  // The ovrHmdCap_ExtendDesktop only reliably reports on Windows currently
-  ON_WINDOWS([&] {
-    directHmdMode = (0 == (ovrHmdCap_ExtendDesktop & hmd->HmdCaps));
-  });
-#endif
-
-  if (!directHmdMode) {
-    setFlags(Qt::FramelessWindowHint);
-  }
-
-  // FIXME 
-  setFlags(Qt::FramelessWindowHint);
   show();
 
 #ifdef USE_RIFT
-  if (directHmdMode) {
-    QRect geometry = getSecondaryScreenGeometry(ovr::toGlm(hmd->Resolution));
-    setFramePosition(geometry.topLeft());
-  } else {
-    setFramePosition(QPoint(hmd->WindowsPos.x, hmd->WindowsPos.y));
-  }
-  resize(hmd->Resolution.w, hmd->Resolution.h);
-
-  // If we're in direct mode, attach to the window
-  if (directHmdMode) {
-    void * nativeWindowHandle = (void*)(size_t)winId();
-    if (nullptr != nativeWindowHandle) {
-      ovrHmd_AttachToWindow(hmd, nativeWindowHandle, nullptr, nullptr);
-    }
-  }
-#else
-  QRect geometry = getSecondaryScreenGeometry(uvec2(1920, 1080));
-  setFramePosition(geometry.topLeft());
-  resize(geometry.size());
+  uvec2 windowSize = uvec2(hmd->Resolution.w / 4, hmd->Resolution.h / 4);
+#else 
+  uvec2 windowSize = uvec2(1280, 800);
 #endif
+
+  QRect geometry = getSecondaryScreenGeometry(windowSize);
+  setFramePosition(geometry.topLeft());
+  resize(QSize(windowSize.x, windowSize.y));
 }
 
 QRiftWindow::~QRiftWindow() {
@@ -130,6 +104,19 @@ void QRiftWindow::queueRenderThreadTask(Lambda task) {
 void QRiftWindow::drawFrame() {
 #ifdef USE_RIFT
   drawRiftFrame();
+  /*
+  for_each_eye([&](ovrEyeType eye) {
+    EyeParams & ep = eyesParams[eye];
+    ep.fbo->Bind(oglplus::Framebuffer::Target::Read);
+    m_context->functions()->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    QSize size = this->size();
+    glBlitFramebuffer(0, 0, ep.size.x, ep.size.y, 0, 0, size.width(), size.height(), GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    ep.fbo->Unbind();
+  });
+  oglplus::DefaultFramebuffer().Bind(oglplus::Framebuffer::Target::Draw);
+  oglplus::DefaultFramebuffer().Bind(oglplus::Framebuffer::Target::Read);
+  m_context->swapBuffers(this);
+  */
 #else
   MatrixStack & mv = Stacks::modelview();
   MatrixStack & pr = Stacks::projection();

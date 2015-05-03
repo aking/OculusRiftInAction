@@ -82,7 +82,7 @@ protected:
 
   vec2 textureSize() {
   #ifdef USE_RIFT
-      return vec2(ovr::toGlm(eyeTextures[0].Header.TextureSize));
+      return vec2(eyesParams[0].size);
   #else
       return vec2(size().width(), size().height());
   #endif

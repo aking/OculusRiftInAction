@@ -518,20 +518,11 @@ void MainWindow::mouseMoveEvent(QMouseEvent * me) {
 }
 
 bool MainWindow::event(QEvent * e) {
-#ifdef USE_RIFT
-    static bool dismissedHmd = false;
-    if (e->type() == QEvent::KeyPress) {
-      if (oria::clearHSW(hmd)) {
-        return true;
-      }
-    }
-#endif
     if (uiWindow) {
         if (uiWindow->interceptEvent(e)) {
             return true;
         }
     }
-
     return QRiftWindow::event(e);
 }
 

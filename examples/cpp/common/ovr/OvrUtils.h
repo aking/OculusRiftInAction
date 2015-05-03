@@ -96,11 +96,39 @@ namespace ovr {
   GLFWwindow * createRiftRenderingWindow(ovrHmd hmd, glm::uvec2 & outSize, glm::ivec2 & outPosition);
 }
 
-namespace oria {
+// A wrapper for constructing and using a
+struct RiftFramebufferWrapper {
+  glm::uvec2              size;
+  oglplus::Framebuffer    fbo;
+  oglplus::Renderbuffer   depth;
+  ovrSwapTextureSet*      textureSet{ nullptr };
+  ovrHmd                  hmd;
 
-  bool clearHSW(ovrHmd hmd);
+  RiftFramebufferWrapper();
+  RiftFramebufferWrapper(ovrHmd hmd, const glm::uvec2 & size);
+  ~RiftFramebufferWrapper();
 
-}
+  void Init(ovrHmd hmd, const glm::uvec2 & size);
+  void Bind(oglplus::Framebuffer::Target target = oglplus::Framebuffer::Target::Draw);
+  void Unbind(oglplus::Framebuffer::Target target = oglplus::Framebuffer::Target::Draw);
+  void Viewport();
+  void Increment();
+
+  template <typename F>
+  void Bound(F f, oglplus::Framebuffer::Target target = oglplus::Framebuffer::Target::Draw) {
+    oglplus::FramebufferName oldFbo = oglplus::Framebuffer::Binding(target);
+    Bind(target);
+    f();
+    oglplus::Framebuffer::Bind(target, oldFbo);
+  }
+
+private:
+  void initColor();
+  void initDepth();
+  void initDone();
+};
+
+using RiftFboPtr = std::shared_ptr<RiftFramebufferWrapper>;
 
 // Convenience method for looping over each eye with a lambda
 template <typename Function>
