@@ -19,7 +19,6 @@
 
 #pragma once
 
-
 /**
 * Conversion between GLM and Oculus math types
 */
@@ -94,41 +93,47 @@ namespace ovr {
   }
 
   GLFWwindow * createRiftRenderingWindow(ovrHmd hmd, glm::uvec2 & outSize, glm::ivec2 & outPosition);
+  
+  
+  struct RiftFramebufferWrapper : public FramebufferWrapper {
+    ovrHmd hmd;
+    RiftFramebufferWrapper(const ovrHmd & hmd) : hmd(hmd) { };
+  };
+  
+  // A wrapper for constructing and using a
+  struct SwapTextureFramebufferWrapper : public RiftFramebufferWrapper {
+    ovrSwapTextureSet*      textureSet{ nullptr };
+    
+    SwapTextureFramebufferWrapper(const ovrHmd & hmd);
+    SwapTextureFramebufferWrapper(const ovrHmd & hmd, const glm::uvec2 & size);
+    ~SwapTextureFramebufferWrapper();
+    
+    void Increment();
+    
+  protected:
+    virtual void initColor();
+    virtual void initDone();
+    virtual void onBind(oglplus::Framebuffer::Target target);
+    virtual void onUnbind(oglplus::Framebuffer::Target target);
+  };
+  
+  using SwapTexFboPtr = std::shared_ptr<SwapTextureFramebufferWrapper>;
+  
+  struct MirrorFramebufferWrapper : public RiftFramebufferWrapper {
+    float                   targetAspect;
+    ovrGLTexture*           texture{ nullptr };
+    MirrorFramebufferWrapper(const ovrHmd & hmd);
+    MirrorFramebufferWrapper(const ovrHmd & hmd, const glm::uvec2 & size);
+    ~MirrorFramebufferWrapper();
+    
+  private:
+    void initColor();
+    void initDone();
+  };
+  
+  using MirrorFboPtr = std::shared_ptr<MirrorFramebufferWrapper>;
+  
 }
-
-// A wrapper for constructing and using a
-struct RiftFramebufferWrapper {
-  glm::uvec2              size;
-  oglplus::Framebuffer    fbo;
-  oglplus::Renderbuffer   depth;
-  ovrSwapTextureSet*      textureSet{ nullptr };
-  ovrHmd                  hmd;
-
-  RiftFramebufferWrapper();
-  RiftFramebufferWrapper(ovrHmd hmd, const glm::uvec2 & size);
-  ~RiftFramebufferWrapper();
-
-  void Init(ovrHmd hmd, const glm::uvec2 & size);
-  void Bind(oglplus::Framebuffer::Target target = oglplus::Framebuffer::Target::Draw);
-  void Unbind(oglplus::Framebuffer::Target target = oglplus::Framebuffer::Target::Draw);
-  void Viewport();
-  void Increment();
-
-  template <typename F>
-  void Bound(F f, oglplus::Framebuffer::Target target = oglplus::Framebuffer::Target::Draw) {
-    oglplus::FramebufferName oldFbo = oglplus::Framebuffer::Binding(target);
-    Bind(target);
-    f();
-    oglplus::Framebuffer::Bind(target, oldFbo);
-  }
-
-private:
-  void initColor();
-  void initDepth();
-  void initDone();
-};
-
-using RiftFboPtr = std::shared_ptr<RiftFramebufferWrapper>;
 
 // Convenience method for looping over each eye with a lambda
 template <typename Function>

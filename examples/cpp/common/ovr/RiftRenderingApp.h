@@ -22,10 +22,10 @@
 class RiftRenderingApp : public RiftManagerApp {
 protected:
   struct EyeParams {
-    ovrEyeRenderDesc  renderDesc;
-    glm::uvec2        size;
-    glm::mat4         projection;
-    RiftFboPtr        fbo;
+    ovrEyeRenderDesc    renderDesc;
+    ovr::SwapTexFboPtr  fbo;
+    uvec2               size;
+    mat4                projection;
   };
 
   using EyeLayers = std::vector<ovrLayerEye_Union>;
@@ -34,7 +34,7 @@ protected:
   uint32_t      frameCount{ 0 };
   ovrVector3f   eyeOffsets[2];
   EyeParams     eyesParams[2];
-  ovrGLTexture* mirrorTexture{ nullptr };
+  ovr::MirrorFboPtr  mirrorFbo;
   bool          mirrorEnabled{ true };
 
 

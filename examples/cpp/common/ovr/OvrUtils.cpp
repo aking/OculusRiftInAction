@@ -19,10 +19,6 @@ limitations under the License.
 
 #include "Common.h"
 
-#ifdef _DEBUG
-#define BRAD_DEBUG 1
-#endif
-
 namespace ovr {
 
   /**
@@ -37,81 +33,91 @@ namespace ovr {
     return window;
   }
 
-}
 
-RiftFramebufferWrapper::RiftFramebufferWrapper() {
-}
+  SwapTextureFramebufferWrapper::SwapTextureFramebufferWrapper(const ovrHmd & hmd)
+    : RiftFramebufferWrapper(hmd) { }
 
-RiftFramebufferWrapper::RiftFramebufferWrapper(ovrHmd hmd, const glm::uvec2 & size) {
-  Init(hmd, size);
-}
+  SwapTextureFramebufferWrapper::SwapTextureFramebufferWrapper(const ovrHmd & hmd, const glm::uvec2 & size)
+    : RiftFramebufferWrapper(hmd) {
+      Init(size);
+    }
 
-RiftFramebufferWrapper::~RiftFramebufferWrapper() {
-  ovrHmd_DestroySwapTextureSet(hmd, textureSet);
-}
-
-void RiftFramebufferWrapper::initColor() {
-  using namespace oglplus;
-  if (!OVR_SUCCESS(ovrHmd_CreateSwapTextureSetGL(hmd, GL_RGBA, size.x, size.y, &textureSet))) {
-    FAIL("Unable to create swap textures");
+  SwapTextureFramebufferWrapper::~SwapTextureFramebufferWrapper() {
+    ovrHmd_DestroySwapTextureSet(hmd, textureSet);
   }
 
-  for (int i = 0; i < textureSet->TextureCount; ++i) {
-    ovrGLTexture& ovrTex = (ovrGLTexture&)textureSet->Textures[i];
-    glBindTexture(GL_TEXTURE_2D, ovrTex.OGL.TexId);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  void SwapTextureFramebufferWrapper::initColor() {
+    // FIXME deallocate any previously created swap texutre set if the size has changed.
+    if (!OVR_SUCCESS(ovrHmd_CreateSwapTextureSetGL(hmd, GL_RGBA, size.x, size.y, &textureSet))) {
+      FAIL("Unable to create swap textures");
+    }
+
+    for (int i = 0; i < textureSet->TextureCount; ++i) {
+      ovrGLTexture& ovrTex = (ovrGLTexture&)textureSet->Textures[i];
+      glBindTexture(GL_TEXTURE_2D, ovrTex.OGL.TexId);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
   }
-  glBindTexture(GL_TEXTURE_2D, 0);
-}
 
-void RiftFramebufferWrapper::initDepth() {
-  using namespace oglplus;
-  Context::Bound(Renderbuffer::Target::Renderbuffer, depth)
-    .Storage(
-    PixelDataInternalFormat::DepthComponent,
-    size.x, size.y);
-}
+  void SwapTextureFramebufferWrapper::initDone() {
+    using namespace oglplus;
+    Framebuffer::Target target = Framebuffer::Target::Draw;
+    Pushed(target, [&]{
+      fbo.AttachRenderbuffer(target, FramebufferAttachment::Depth, depth);
+      // do nothing with color, because our color attachment will change every frame
+    });
+  }
 
-void RiftFramebufferWrapper::initDone() {
-  using namespace oglplus;
-  Bound([&] {
-    fbo.AttachRenderbuffer(Framebuffer::Target::Draw, FramebufferAttachment::Depth, depth);
-    fbo.Complete(Framebuffer::Target::Draw);
-  });
-}
+  void SwapTextureFramebufferWrapper::onBind(oglplus::Framebuffer::Target target) {
+    using namespace oglplus;
+    ovrGLTexture& tex = (ovrGLTexture&)(textureSet->Textures[textureSet->CurrentIndex]);
+    GLenum glTarget = target == Framebuffer::Target::Draw ? GL_DRAW_FRAMEBUFFER : GL_READ_FRAMEBUFFER;
+    glFramebufferTexture2D(glTarget, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex.OGL.TexId, 0);
+  }
+  
+  void SwapTextureFramebufferWrapper::onUnbind(oglplus::Framebuffer::Target target) {
+    using namespace oglplus;
+    GLenum glTarget = target == Framebuffer::Target::Draw ? GL_DRAW_FRAMEBUFFER : GL_READ_FRAMEBUFFER;
+    glFramebufferTexture2D(glTarget, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+  }
 
-void RiftFramebufferWrapper::Init(ovrHmd hmd, const glm::uvec2 & size) {
-  this->hmd = hmd;
-  this->size = size;
-  initColor();
-  initDepth();
-  initDone();
-}
+  void SwapTextureFramebufferWrapper::Increment() {
+    ++textureSet->CurrentIndex;
+    textureSet->CurrentIndex %= textureSet->TextureCount;
+  }
+  
+  MirrorFramebufferWrapper::MirrorFramebufferWrapper(const ovrHmd & hmd)
+    : RiftFramebufferWrapper(hmd) { }
 
-void RiftFramebufferWrapper::Bind(oglplus::Framebuffer::Target target) {
-  using namespace oglplus;
-  fbo.Bind(target);
-  ovrGLTexture& tex = (ovrGLTexture&)(textureSet->Textures[textureSet->CurrentIndex]);
-  GLenum glTarget = target == Framebuffer::Target::Draw ? GL_DRAW_FRAMEBUFFER : GL_READ_FRAMEBUFFER;
-  glFramebufferTexture2D(glTarget, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex.OGL.TexId, 0);
-}
+  MirrorFramebufferWrapper::MirrorFramebufferWrapper(const ovrHmd & hmd, const glm::uvec2 & size)
+    : RiftFramebufferWrapper(hmd) {
+      Init(size);
+  }
 
-void RiftFramebufferWrapper::Unbind(oglplus::Framebuffer::Target target) {
-  using namespace oglplus;
-  GLenum glTarget = target == Framebuffer::Target::Draw ? GL_DRAW_FRAMEBUFFER : GL_READ_FRAMEBUFFER;
-  glFramebufferTexture2D(glTarget, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
-  DefaultFramebuffer().Bind(target);
-}
+  MirrorFramebufferWrapper::~MirrorFramebufferWrapper() {
+    if (texture) {
+      ovrHmd_DestroyMirrorTexture(hmd, (ovrTexture*)texture);
+      texture = nullptr;
+    }
+  }
+    
+  void MirrorFramebufferWrapper::initColor() {
+    ovrHmd_CreateMirrorTextureGL(hmd, GL_RGBA, size.x, size.y, (ovrTexture**)&texture);
+  }
+  
+  void MirrorFramebufferWrapper::initDone() {
+    using namespace oglplus;
+    Framebuffer::Target target = Framebuffer::Target::Read;
+    Pushed(target, [&]{
+      fbo.AttachRenderbuffer(target, FramebufferAttachment::Depth, depth);
+      glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture->OGL.TexId, 0);
+    });
 
-void RiftFramebufferWrapper::Viewport() {
-  oglplus::Context::Viewport(0, 0, size.x, size.y);
-}
+  }
 
-void RiftFramebufferWrapper::Increment() {
-  ++textureSet->CurrentIndex;
-  textureSet->CurrentIndex %= textureSet->TextureCount;
 }
 

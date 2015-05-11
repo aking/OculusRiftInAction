@@ -23,28 +23,18 @@ void RiftRenderingApp::initializeRiftRendering() {
 
     // Allocate the frameBuffer that will hold the scene, and then be
     // submitted to the SDk for distortion and display on screen
-    ep.fbo = RiftFboPtr(new RiftFramebufferWrapper(hmd, ovr::toGlm(viewport.Size)));
+    ep.fbo = ovr::SwapTexFboPtr(new ovr::SwapTextureFramebufferWrapper(hmd, ovr::toGlm(viewport.Size)));
     layer.ColorTexture[eye] = ep.fbo->textureSet;
   });
 }
 
 void RiftRenderingApp::setupMirror(const glm::uvec2 & size) {
-  if (mirrorTexture) {
-    ovrHmd_DestroyMirrorTexture(hmd, (ovrTexture*)mirrorTexture);
-    mirrorTexture = nullptr;
-  }
-
   if (mirrorEnabled) {
-    ovrHmd_CreateMirrorTextureGL(hmd, GL_RGBA, size.x, size.y, (ovrTexture**)&mirrorTexture);
-
-    glGenFramebuffers(1, &mirrorFBO);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, mirrorFBO);
-    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, mirrorTexture->OGL.TexId, 0);
-    glFramebufferRenderbuffer(GL_READ_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-
+    if (!mirrorFbo) {
+      mirrorFbo = ovr::MirrorFboPtr(new ovr::MirrorFramebufferWrapper(hmd));
+    }
+    mirrorFbo->Init(size);
   }
-
 }
 
 
@@ -92,11 +82,11 @@ void RiftRenderingApp::drawRiftFrame() {
       glm::mat4 eyePose = ovr::toGlm(pose);
       mv.preMultiply(glm::inverse(eyePose));
 
-      eyeParams.fbo->Bind();
-      eyeParams.fbo->Viewport();
       // Render the scene to an offscreen buffer
-      perEyeRender();
-      eyeParams.fbo->Unbind();
+      eyeParams.fbo->Pushed([&]{
+        eyeParams.fbo->Viewport();
+        perEyeRender();
+      });
     });
 
     if (eyePerFrameMode) {
