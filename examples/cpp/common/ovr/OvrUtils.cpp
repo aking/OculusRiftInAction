@@ -106,7 +106,12 @@ namespace ovr {
   }
     
   void MirrorFramebufferWrapper::initColor() {
-    ovrHmd_CreateMirrorTextureGL(hmd, GL_RGBA, size.x, size.y, (ovrTexture**)&texture);
+      if (texture) {
+        ovrHmd_DestroyMirrorTexture(hmd, (ovrTexture*)texture);
+        texture = nullptr;
+      }
+      ovrResult result = ovrHmd_CreateMirrorTextureGL(hmd, GL_RGBA, size.x, size.y, (ovrTexture**)&texture);
+      Q_ASSERT(OVR_SUCCESS(result));
   }
   
   void MirrorFramebufferWrapper::initDone() {

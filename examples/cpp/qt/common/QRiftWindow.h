@@ -66,6 +66,8 @@ private:
 
 
 protected:
+  virtual void resizeEvent(QResizeEvent * ev);
+
   virtual void setup();
 
 #ifndef USE_RIFT

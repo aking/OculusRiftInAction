@@ -28,7 +28,7 @@ public:
   static FramebufferStack & instance();
   
   void Push(oglplus::Framebuffer::Target target, FramebufferWrapper * fboWrapper);
-  FramebufferWrapper* Pop();
+  void Pop();
 };
 
 // A wrapper for constructing and using a
@@ -45,7 +45,9 @@ struct FramebufferWrapper {
     Init(size);
   }
   
-  virtual ~FramebufferWrapper();
+  virtual ~FramebufferWrapper() {
+
+  }
   
   virtual void Init(const glm::uvec2 & size) {
     this->size = size;
@@ -117,6 +119,7 @@ private:
       fbo.Complete(target);
     });
   }
+  friend class FboState;
 };
 
 typedef std::shared_ptr<FramebufferWrapper> FramebufferWrapperPtr;

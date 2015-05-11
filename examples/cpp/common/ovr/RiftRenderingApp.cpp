@@ -30,9 +30,9 @@ void RiftRenderingApp::initializeRiftRendering() {
 
 void RiftRenderingApp::setupMirror(const glm::uvec2 & size) {
   if (mirrorEnabled) {
-    if (!mirrorFbo) {
-      mirrorFbo = ovr::MirrorFboPtr(new ovr::MirrorFramebufferWrapper(hmd));
-    }
+      if (!mirrorFbo) {
+        mirrorFbo = ovr::MirrorFboPtr(new ovr::MirrorFramebufferWrapper(hmd));
+      }
     mirrorFbo->Init(size);
   }
 }
@@ -104,11 +104,26 @@ void RiftRenderingApp::drawRiftFrame() {
     endFrameLock->unlock();
   }
   for_each_eye([&](ovrEyeType eye) {
-    if (eyePerFrameMode && lastEyeRendered != eye) {
+    if (eyePerFrameMode && lastEyeRendered == eye) {
+      // Only increment the eye we're going to change next
       return;
     }
     eyesParams[eye].fbo->Increment();
   });
+
+  if (mirrorEnabled && mirrorFbo) {
+      mirrorFbo->Pushed(oglplus::Framebuffer::Target::Read, [&] {
+          // Copy the mirror buffer, flipping the Y axis, because reasons.
+          glBlitFramebuffer(
+              0, mirrorFbo->size.y, mirrorFbo->size.x, 0,
+              0, 0, mirrorFbo->size.x, mirrorFbo->size.y,
+              GL_COLOR_BUFFER_BIT, GL_NEAREST
+          );
+      });
+  }
+  
+
+
   rateCounter.increment();
   if (rateCounter.elapsed() > 2.0f) {
     float fps = rateCounter.getRate();

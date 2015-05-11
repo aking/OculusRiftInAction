@@ -5,7 +5,7 @@ protected:
   ovrHmd                  hmd{ 0 };
   bool                    debugDevice{ false };
   ovrVector3f             eyeOffsets[2];
-  RiftFboPtr              eyeFramebuffers[2];
+  ovr::SwapTexFboPtr      eyeFramebuffers[2];
   glm::mat4               eyeProjections[2];
   ovrLayerEye_Union       submitLayers[1];
 
@@ -79,8 +79,8 @@ public:
       vp.Pos = { 0, 0 };
       vp.Size = ovrHmd_GetFovTextureSize(hmd, eye, fov, 1.0f);
 
-      eyeFramebuffers[eye] = RiftFboPtr(new RiftFramebufferWrapper());
-      eyeFramebuffers[eye]->Init(hmd, ovr::toGlm(vp.Size));
+      eyeFramebuffers[eye] = ovr::SwapTexFboPtr(new ovr::SwapTextureFramebufferWrapper(hmd));
+      eyeFramebuffers[eye]->Init(ovr::toGlm(vp.Size));
       layer.ColorTexture[eye] = eyeFramebuffers[eye]->textureSet;
 
       auto erd = ovrHmd_GetRenderDesc(hmd, eye, fov);
@@ -139,16 +139,16 @@ public:
 
     for (int i = 0; i < 2; ++i) {
       ovrEyeType eye = hmd->EyeRenderOrder[i];
-      RiftFboPtr fbo = eyeFramebuffers[eye];
       Stacks::projection().top() = eyeProjections[eye];
       MatrixStack & mv = Stacks::modelview();
-      fbo->Bind();
       mv.withPush([&]{
         // Apply the per-eye offset & the head pose
         mv.top() = glm::inverse(ovr::toGlm(eyePoses[eye])) * mv.top();
-        renderScene();
+        eyeFramebuffers[eye]->Pushed([&] {
+            eyeFramebuffers[eye]->Viewport();
+            renderScene();
+        });
       });
-      fbo->Unbind();
     };
     oglplus::DefaultFramebuffer().Bind(oglplus::Framebuffer::Target::Draw);
     ovrLayerEyeFov & layer = submitLayers[0].EyeFov;

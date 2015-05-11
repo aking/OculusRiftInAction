@@ -42,6 +42,7 @@ struct Preset {
 
 const QStringList PRESETS({
     ":/shaders/default.xml",
+    ":/shaders/XljGR3.json",
     ":/shaders/4df3DS.json",
     ":/shaders/4dfGzs.json",
     ":/shaders/4djGWR.json",
@@ -49,6 +50,7 @@ const QStringList PRESETS({
     ":/shaders/4dXGRM_flying_steel_cubes.xml",
     // ":/shaders/4sBGD1.json",
     // ":/shaders/4slGzn.json",
+
     ":/shaders/4sX3R2.json", // Monster
     ":/shaders/4sXGRM_oceanic.xml",
     ":/shaders/4tXGDn.json", // Morphing
@@ -136,10 +138,10 @@ void MainWindow::setup() {
     mouseShape = oria::loadPlane(uiProgram, UI_INVERSE_ASPECT);
 
     uiFramebuffer = FramebufferWrapperPtr(new FramebufferWrapper());
-    uiFramebuffer->init(UI_SIZE);
+    uiFramebuffer->Init(UI_SIZE);
 
     shaderFramebuffer = FramebufferWrapperPtr(new FramebufferWrapper());
-    shaderFramebuffer->init(textureSize());
+    shaderFramebuffer->Init(textureSize());
 
     DefaultFramebuffer().Bind(Framebuffer::Target::Draw);
 }
@@ -398,6 +400,7 @@ void MainWindow::onShaderSourceChanged(const QString & shaderSource) {
     queueRenderThreadTask([&, shaderSource] {
         renderer.setShaderSourceInternal(shaderSource);
         renderer.updateUniforms();
+        activeShader.vrEnabled = shaderSource.contains("#pragma vr");
     });
 }
 
@@ -527,6 +530,7 @@ bool MainWindow::event(QEvent * e) {
 }
 
 void MainWindow::resizeEvent(QResizeEvent *e) {
+    QRiftWindow::resizeEvent(e);
     uiWindow->setSourceSize(e->size());
 }
 
@@ -558,7 +562,7 @@ void MainWindow::perFrameRender() {
         if (currentUiTexture) {
             Texture::Active(0);
             // Composite the UI image and the mouse sprite
-            uiFramebuffer->Bound([&] {
+            uiFramebuffer->Pushed([&] {
                 Context::Clear().ColorBuffer();
                 oria::viewport(UI_SIZE);
                 // Clear out the projection and modelview here.
@@ -602,7 +606,7 @@ void MainWindow::perFrameRender() {
 void MainWindow::perEyeRender() {
     // Render the shadertoy effect into a framebuffer, possibly at a
     // smaller resolution than recommended
-    shaderFramebuffer->Bound([&] {
+    shaderFramebuffer->Pushed([&] {
         Context::Clear().ColorBuffer();
         oria::viewport(renderSize());
         renderer.setResolution(renderSize());

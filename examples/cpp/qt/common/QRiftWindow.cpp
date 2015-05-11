@@ -52,6 +52,8 @@ QRiftWindow::QRiftWindow() {
   // Qt Quick may need a depth and stencil buffer. Always make sure these are available.
   format.setDepthBufferSize(16);
   format.setStencilBufferSize(8);
+  format.setSwapBehavior(QSurfaceFormat::SwapBehavior::SingleBuffer);
+  auto swapBehavior = format.swapBehavior();
   format.setVersion(4, 3);
   format.setProfile(QSurfaceFormat::OpenGLContextProfile::CoreProfile);
   setFormat(format);
@@ -59,6 +61,8 @@ QRiftWindow::QRiftWindow() {
   m_context = new QOpenGLContext;
   m_context->setFormat(format);
   m_context->create();
+  swapBehavior = m_context->format().swapBehavior();
+
 
   renderThread.setLambda([&] { renderLoop(); });
   bool directHmdMode = false;
@@ -104,19 +108,7 @@ void QRiftWindow::queueRenderThreadTask(Lambda task) {
 void QRiftWindow::drawFrame() {
 #ifdef USE_RIFT
   drawRiftFrame();
-  /*
-  for_each_eye([&](ovrEyeType eye) {
-    EyeParams & ep = eyesParams[eye];
-    ep.fbo->Bind(oglplus::Framebuffer::Target::Read);
-    m_context->functions()->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-    QSize size = this->size();
-    glBlitFramebuffer(0, 0, ep.size.x, ep.size.y, 0, 0, size.width(), size.height(), GL_COLOR_BUFFER_BIT, GL_LINEAR);
-    ep.fbo->Unbind();
-  });
-  oglplus::DefaultFramebuffer().Bind(oglplus::Framebuffer::Target::Draw);
-  oglplus::DefaultFramebuffer().Bind(oglplus::Framebuffer::Target::Read);
   m_context->swapBuffers(this);
-  */
 #else
   MatrixStack & mv = Stacks::modelview();
   MatrixStack & pr = Stacks::projection();
@@ -156,6 +148,7 @@ void QRiftWindow::renderLoop() {
   m_context->moveToThread(QApplication::instance()->thread());
 }
 
+static bool _setup = false;
 void QRiftWindow::setup() {
   m_context->makeCurrent(this);
   glewExperimental = true;
@@ -177,6 +170,28 @@ void QRiftWindow::setup() {
 #ifdef USE_RIFT
   initializeRiftRendering();
 #endif
+  _setup = true;
+  if (mirrorEnabled) {
+      makeCurrent();
+      if (!mirrorFbo) {
+          mirrorFbo = ovr::MirrorFboPtr(new ovr::MirrorFramebufferWrapper(hmd));
+      }
+      mirrorFbo->Init(oria::qt::toGlm(size()));
+  }
+}
+
+
+void QRiftWindow::resizeEvent(QResizeEvent * ev) {
+    glm::uvec2 newSize = oria::qt::toGlm(ev->size());
+    if (mirrorEnabled && _setup) {
+        queueRenderThreadTask([=] {
+            makeCurrent();
+            if (!mirrorFbo) {
+                mirrorFbo = ovr::MirrorFboPtr(new ovr::MirrorFramebufferWrapper(hmd));
+            }
+            mirrorFbo->Init(newSize);
+        });
+    }
 }
 
 //#include "QRiftWindow.moc"
