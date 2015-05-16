@@ -319,8 +319,7 @@ public:
         window = createRenderingTarget(windowSize, windowPosition);
 
         if (!window) {
-            std::cout << "Unable to create OpenGL window" << std::endl;
-            return -1;
+            FAIL("Unable to create OpenGL window"); 
         }
 
         postCreate();
@@ -361,7 +360,7 @@ protected:
     void preCreate() {
         glfwWindowHint(GLFW_DEPTH_BITS, 16);
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
         // Without this line we get
         // FATAL (86): NSGL: The targeted version of OS X only supports OpenGL 3.2 and later versions if they are forward-compatible
@@ -374,6 +373,7 @@ protected:
     void postCreate() {
         glfwSetWindowUserPointer(window, this);
         glfwSetKeyCallback(window, KeyCallback);
+        glfwSetWindowSizeCallback(window, ResizeCallback);
         glfwSetMouseButtonCallback(window, MouseButtonCallback);
         glfwMakeContextCurrent(window);
         glfwSwapInterval(1);
@@ -400,12 +400,9 @@ protected:
         }
     }
 
-    virtual void initGl() {
-    }
+    virtual void initGl() { }
 
-    virtual void shutdownGl() {
-
-    }
+    virtual void shutdownGl() { }
 
     virtual void finishFrame() {
         glfwSwapBuffers(window);
@@ -433,6 +430,10 @@ protected:
 
     virtual void onMouseButton(int button, int action, int mods) {}
 
+    virtual void onResize(const uvec2 & size) {
+        windowSize = size;
+    }
+
 protected:
     virtual void viewport(const ivec2 & pos, const uvec2 & size) {
         glViewport(pos.x, pos.y, size.x, size.y);
@@ -448,6 +449,11 @@ private:
     static void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
         GlfwApp * instance = (GlfwApp *)glfwGetWindowUserPointer(window);
         instance->onMouseButton(button, action, mods);
+    }
+
+    static void ResizeCallback(GLFWwindow* window, int x, int y) {
+        GlfwApp * instance = (GlfwApp *)glfwGetWindowUserPointer(window);
+        instance->onResize(uvec2(x, y));
     }
 
     static void ErrorCallback(int error, const char* description) {
@@ -557,9 +563,9 @@ namespace ovr {
     }
 
 
-    inline GLFWwindow * createRiftRenderingWindow(ovrHmd hmd, glm::uvec2 & outSize, glm::ivec2 & outPosition, GLFWwindow * shared = nullptr) {
-        outSize = glm::uvec2(hmd->Resolution.w, hmd->Resolution.h);
-        outSize /= 4;
+    inline GLFWwindow * createRiftRenderingWindow(ovrHmd hmd, uvec2 & outSize, ivec2 & outPosition, GLFWwindow * shared = nullptr) {
+        outSize = uvec2(hmd->Resolution.w, hmd->Resolution.h);
+        outSize /= 2;
         GLFWwindow * window = glfw::createSecondaryScreenWindow(outSize, nullptr);
         glfwGetWindowPos(window, &outPosition.x, &outPosition.y);
         return window;
@@ -619,160 +625,201 @@ public:
 };
 
 
-#include <OVR_CAPI_GL.h>
+// A basic wrapper for constructing a framebuffer with a renderbuffer 
+// for the depth attachment and an undefined type for the color attachement
+// This allows us to reuse the basic framebuffer code for both the Mirror 
+// FBO as well as the Oculus swap textures we will use to render the scene
+// Though we don't really need depth at all for the mirror FBO, or even an
+// FBO, but using one means I can just use a glBlitFramebuffer to get it onto
+// the screen.  
+template <typename C = GLuint, typename D = GLuint>
+struct FramebufferWrapper {
+    uvec2      size;
+    GLuint          fbo{ 0 };
+    C               color{ 0 };
+    GLuint          depth{ 0 };
 
-struct RiftFramebufferWrapper {
-    glm::uvec2 size;
-    ovrSwapTextureSet* textureSet;
-    GLuint fbo{ 0 };
-    GLuint depth{ 0 };
-    ovrHmd hmd;
-
-    virtual ~RiftFramebufferWrapper() {
-        release();
+    virtual ~FramebufferWrapper() {
     }
 
-private:
-    void allocate() {
-        ovrResult result = ovrHmd_CreateSwapTextureSetGL(hmd, GL_RGBA, size.x, size.y, &textureSet);
-        assert(ovrSuccess == result);
-        glGenRenderbuffers(1, &depth);
-        assert(depth);
-        glGenFramebuffers(1, &fbo);
-        assert(fbo);
-    }
+    FramebufferWrapper() {}
 
-    void release() {
-        if (fbo) {
-            glDeleteFramebuffers(1, &fbo);
-            fbo = 0;
-        }
-        ovrHmd_DestroySwapTextureSet(hmd, textureSet);
-        textureSet = nullptr;
-
-        if (depth) {
-            glDeleteRenderbuffers(1, &depth);
-            depth = 0;
-        }
-    }
-
-public:
-    static bool checkStatus(GLenum target = GL_FRAMEBUFFER) {
-        GLuint status = glCheckFramebufferStatus(target);
-        switch (status) {
-        case GL_FRAMEBUFFER_COMPLETE:
-            return true;
-            break;
-
-        case GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT:
-            std::cerr << "framebuffer incomplete attachment" << std::endl;
-            break;
-
-        case GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT:
-            std::cerr << "framebuffer missing attachment" << std::endl;
-            break;
-
-        case GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER:
-            std::cerr << "framebuffer incomplete draw buffer" << std::endl;
-            break;
-
-        case GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER:
-            std::cerr << "framebuffer incomplete read buffer" << std::endl;
-            break;
-
-        case GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE:
-            std::cerr << "framebuffer incomplete multisample" << std::endl;
-            break;
-
-        case GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS:
-            std::cerr << "framebuffer incomplete layer targets" << std::endl;
-            break;
-
-        case GL_FRAMEBUFFER_UNSUPPORTED:
-            std::cerr << "framebuffer unsupported internal format or image" << std::endl;
-            break;
-
-        default:
-            std::cerr << "other framebuffer error" << std::endl;
-            break;
-        }
-
-        return false;
-    }
-
-    void init(ovrHmd hmd, const glm::ivec2 & size) {
-        this->hmd = hmd;
+    virtual void Init(const uvec2 & size) {
         this->size = size;
-        allocate();
-
-        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-
-        for (int i = 0; i < textureSet->TextureCount; ++i) {
-            ovrGLTexture& tex = (ovrGLTexture&)(textureSet->Textures[i]);
-            glBindTexture(GL_TEXTURE_2D, tex.OGL.TexId);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-            glBindTexture(GL_TEXTURE_2D, 0);
+        if (!fbo) {
+            glGenFramebuffers(1, &fbo);
         }
-
-        if (depth) {
-            glBindRenderbuffer(GL_RENDERBUFFER, depth);
-            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, size.x, size.y);
-            glBindRenderbuffer(GL_RENDERBUFFER, 0);
-        }
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        initColor();
+        initDepth();
+        initDone();
     }
 
-    void activate() {
-        assert(fbo);
+    template <typename F>
+    void Bound(F f) {
+        Bound(GL_FRAMEBUFFER, f);
+    }
 
-        ovrGLTexture& tex = (ovrGLTexture&)(textureSet->Textures[textureSet->CurrentIndex]);
-        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex.OGL.TexId, 0);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth);
-        //glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depth, 0);
-        if (!checkStatus()) {
-            FAIL("Invalid FBO");
-        }
+    template <typename F>
+    void Bound(GLenum target, F f) {
+        glBindFramebuffer(target, fbo);
+        onBind(target);
+        f();
+        onUnbind(target);
+        glBindFramebuffer(target, 0);
+    }
+
+    void Viewport() {
         glViewport(0, 0, size.x, size.y);
     }
 
-    void deactivate() {
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+private:
+    virtual void onBind(GLenum target) {}
+    virtual void onUnbind(GLenum target) {}
+
+
+    virtual void initDepth() {
+        glGenRenderbuffers(1, &depth);
+        assert(depth);
+        glBindRenderbuffer(GL_RENDERBUFFER, depth);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, size.x, size.y);
+        glBindRenderbuffer(GL_RENDERBUFFER, 0);
     }
 
-    void increment() {
-        ++textureSet->CurrentIndex;
-        textureSet->CurrentIndex %= textureSet->TextureCount;
-    }
+    virtual void initColor() = 0;
+    virtual void initDone() = 0;
 };
 
 
+#include <OVR_CAPI_GL.h>
 
-class RiftApp : public GlfwApp, public RiftManagerApp {
-public:
+// A base class for FBO wrappers that need to use the Oculus C 
+// API to manage textures via ovrHmd_CreateSwapTextureSetGL,
+// ovrHmd_CreateMirrorTextureGL, etc
+template <typename C>
+struct RiftFramebufferWrapper : public FramebufferWrapper<C> {
+    ovrHmd hmd;
+    RiftFramebufferWrapper(const ovrHmd & hmd) : hmd(hmd) {};
+};
+
+// A wrapper for constructing and using a swap texture set, 
+// where each frame you draw to a texture via the FBO,
+// then submit it and increment to the next texture.  
+// The Oculus SDK manages the creation and destruction of 
+// the textures
+struct SwapTextureFramebufferWrapper : public RiftFramebufferWrapper<ovrSwapTextureSet*>{
+    SwapTextureFramebufferWrapper(const ovrHmd & hmd) 
+        : RiftFramebufferWrapper(hmd) {}
+    ~SwapTextureFramebufferWrapper() {
+        if (color) {
+            ovrHmd_DestroySwapTextureSet(hmd, color);
+            color = nullptr;
+        }
+    }
+
+    void Increment() {
+        ++color->CurrentIndex;
+        color->CurrentIndex %= color->TextureCount;
+    }
 
 protected:
-    ovrVector3f eyeOffsets[2];
-//    ovrSwapTextureSet * eyeTextureSets[2];
+    virtual void initColor() {
+        if (color) {
+            ovrHmd_DestroySwapTextureSet(hmd, color);
+            color = nullptr;
+        }
 
+        if (!OVR_SUCCESS(ovrHmd_CreateSwapTextureSetGL(hmd, GL_RGBA, size.x, size.y, &color))) {
+            FAIL("Unable to create swap textures");
+        }
+
+        for (int i = 0; i < color->TextureCount; ++i) {
+            ovrGLTexture& ovrTex = (ovrGLTexture&)color->Textures[i];
+            glBindTexture(GL_TEXTURE_2D, ovrTex.OGL.TexId);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        }
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
+    virtual void initDone() {
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+
+    virtual void onBind(GLenum target) {
+        ovrGLTexture& tex = (ovrGLTexture&)(color->Textures[color->CurrentIndex]);
+        glFramebufferTexture2D(target, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex.OGL.TexId, 0);
+    }
+
+    virtual void onUnbind(GLenum target) {
+        glFramebufferTexture2D(target, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+    }
+};
+
+using SwapTexFboPtr = std::shared_ptr<SwapTextureFramebufferWrapper>;
+
+// We use a FBO to wrap the mirror texture because it makes it easier to 
+// render to the screen via glBlitFramebuffer
+struct MirrorFramebufferWrapper : public RiftFramebufferWrapper<ovrGLTexture*>{
+    float                   targetAspect;
+    MirrorFramebufferWrapper(const ovrHmd & hmd) 
+        : RiftFramebufferWrapper(hmd) {}
+    ~MirrorFramebufferWrapper() {
+        if (color) {
+            ovrHmd_DestroyMirrorTexture(hmd, (ovrTexture*)color);
+            color = nullptr;
+        }
+    }
+
+    void Resize(const uvec2 & size) {
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        this->size = size;
+        initColor();
+        initDone();
+    }
 private:
-    ovrEyeType currentEye{ ovrEye_Count };
-    ovrEyeRenderDesc eyeRenderDescs[2];
-    mat4 projections[2];
-    ovrPosef eyePoses[2];
-    RiftFramebufferWrapper eyeFbos[2]; 
-    ovrLayerEyeFov layer;
-    int frameIndex{ 0 };
+    virtual void initDepth() {
+    }
+
+    void initColor() {
+        if (color) {
+            ovrHmd_DestroyMirrorTexture(hmd, (ovrTexture*)color);
+            color = nullptr;
+        }
+        ovrResult result = ovrHmd_CreateMirrorTextureGL(hmd, GL_RGBA, size.x, size.y, (ovrTexture**)&color);
+        assert(OVR_SUCCESS(result));
+    }
+
+    void initDone() {
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color->OGL.TexId, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+
+};
+
+using MirrorFboPtr = std::shared_ptr<MirrorFramebufferWrapper>;
+
+class RiftApp : public GlfwApp, public RiftManagerApp {
+private:
+    ovrEyeType          currentEye{ ovrEye_Count };
+    ovrVector3f         eyeOffsets[2];
+    ovrEyeRenderDesc    eyeRenderDescs[2];
+    mat4                projections[2];
+    ovrPosef            eyePoses[2];
+    SwapTexFboPtr       eyeFbos[2];
+    MirrorFboPtr        mirror;
+    ovrLayerEyeFov      layer;
+    int                 frameIndex{ 0 };
 
 public:
 
-    RiftApp() {
-    }
+    RiftApp() { }
 
     virtual void configureTracking() {
         if (ovrSuccess != ovrHmd_ConfigureTracking(hmd,
@@ -783,6 +830,7 @@ public:
     }
 
     virtual void configureRendering() {
+        glfwSwapInterval(0);
         layer.Header.Type = ovrLayerType_EyeFov;
         layer.Header.Flags = ovrLayerFlag_TextureOriginAtBottomLeft;
         ovr::for_each_eye([&](ovrEyeType eye) {
@@ -792,14 +840,16 @@ public:
 
             ovrEyeRenderDesc & erd = eyeRenderDescs[eye];
             erd = ovrHmd_GetRenderDesc(hmd, eye, hmd->MaxEyeFov[eye]);
-            ovrMatrix4f ovrPerspectiveProjection = ovrMatrix4f_Projection(erd.Fov, OVR_DEFAULT_IPD * 4, 100000.0f, true);
+            ovrMatrix4f ovrPerspectiveProjection = 
+                ovrMatrix4f_Projection(erd.Fov, 0.10f, 10000.0f, ovrProjection_RightHanded);
             projections[eye] = ovr::toGlm(ovrPerspectiveProjection);
             eyeOffsets[eye] = erd.HmdToEyeViewOffset;
 
             // Allocate the frameBuffer that will hold the scene, and then be
             // re-rendered to the screen with distortion
-            eyeFbos[eye].init(hmd, ovr::toGlm(size));
-            layer.ColorTexture[eye] = eyeFbos[eye].textureSet;
+            eyeFbos[eye] = SwapTexFboPtr(new SwapTextureFramebufferWrapper(hmd));
+            eyeFbos[eye]->Init(ovr::toGlm(size));
+            layer.ColorTexture[eye] = eyeFbos[eye]->color;
         });
     }
 
@@ -816,10 +866,13 @@ protected:
         GlfwApp::initGl();
         configureTracking();
         configureRendering();
+        mirror = MirrorFboPtr(new MirrorFramebufferWrapper(hmd));
+        mirror->Init(windowSize);
     }
 
-    // Override the base class to prevent the swap buffer call, because OVR does it in end frame
-    virtual void finishFrame() {
+    virtual void onResize(const uvec2 & size) {
+        GlfwApp::onResize(size);
+        mirror->Resize(size);
     }
 
     virtual void onKey(int key, int scancode, int action, int mods) {
@@ -833,32 +886,31 @@ protected:
     }
 
     virtual void draw() final {
-        auto frameTiming = ovrHmd_GetFrameTiming(hmd, frameIndex);
-        auto trackingState = ovrHmd_GetTrackingState(hmd, ovr_GetTimeInSeconds());
-        ovr_CalcEyePoses(trackingState.HeadPose.ThePose, eyeOffsets, eyePoses);
-
+        ovrHmd_GetEyePoses(hmd, frameIndex, eyeOffsets, eyePoses, nullptr);
         for (int i = 0; i < 2; ++i) {
             ovrEyeType eye = currentEye = hmd->EyeRenderOrder[i];
             // Render the scene to an offscreen buffer
-            eyeFbos[eye].activate();
-            renderScene(projections[eye], ovr::toGlm(eyePoses[eye]));
-            eyeFbos[eye].deactivate();
-        }
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        ovrLayerHeader* layers = &layer.Header;
-        ovr::for_each_eye([&](ovrEyeType eye) {
+            eyeFbos[eye]->Bound([&] {
+                eyeFbos[eye]->Viewport();
+                renderScene(projections[eye], ovr::toGlm(eyePoses[eye]));
+            });
             layer.RenderPose[eye] = eyePoses[eye];
-        });
-
-        ovrHmd_SubmitFrame(hmd, frameIndex, nullptr, &layers, 1);
-
+        }
+        ovrLayerHeader* layers = &layer.Header;
+        ovrResult result = ovrHmd_SubmitFrame(hmd, frameIndex, nullptr, &layers, 1);
         ovr::for_each_eye([&](ovrEyeType eye) {
-            eyeFbos[eye].increment();
+            eyeFbos[eye]->Increment();
+        });
+        mirror->Bound(GL_READ_FRAMEBUFFER, [&] {
+            glBlitFramebuffer(
+                0, mirror->size.y, mirror->size.x, 0,
+                0, 0, mirror->size.x, mirror->size.y,
+                GL_COLOR_BUFFER_BIT, GL_NEAREST);
         });
         ++frameIndex;
     }
 
-    virtual void renderScene(const glm::mat4 & projection, const glm::mat4 & headPose) = 0;
+    virtual void renderScene(const mat4 & projection, const mat4 & headPose) = 0;
 };
 
 //////////////////////////////////////////////////////////////////////
@@ -867,7 +919,6 @@ protected:
 // render.  I use oglplus to render an array of cubes, but your 
 // application would perform whatever rendering you want
 //
-
 
 //////////////////////////////////////////////////////////////////////
 //
@@ -897,43 +948,77 @@ namespace Attribute {
         Normal = 2,
         Color = 3,
         TexCoord1 = 4,
+        Flags = 4,
         InstanceTransform = 5,
     };
 }
 
-static const char * VERTEX_SHADER =
-"#version 410\n"
+namespace Uniform {
+    enum {
+        Projection = 1,
+        Modelview = 4,
+    };
+}
 
-"uniform mat4 ProjectionMatrix;"
-"uniform mat4 CameraMatrix;"
+static const char * VERTEX_SHADER = R"SHADER(#version 430
 
-"layout(location = 0) in vec4 Position;"
-"layout(location = 2) in vec3 Normal;"
-"layout(location = 5) in mat4 InstanceTransform;"
+layout(location = 1) uniform mat4 ProjectionMatrix;
+layout(location = 4) uniform mat4 CameraMatrix;
 
-"out vec3 vertNormal;"
+layout(location = 0) in vec4 Position;
+layout(location = 1) in vec2 TexCoord;
+layout(location = 2) in vec3 Normal;
+layout(location = 4) in uint Flags;
+layout(location = 5) in mat4 InstanceTransform;
 
-"void main(void)"
-"{"
-" mat4 ViewXfm = CameraMatrix * InstanceTransform;"
-" vertNormal = Normal;"
-" gl_Position = ProjectionMatrix * ViewXfm * Position;"
-"}";
+out vec3 vertNormal;
+out vec2 texCoord;
+flat out uint flags;
 
-static const char * FRAGMENT_SHADER =
-"#version 410\n"
-"in vec3 vertNormal;"
+void main(void)
+{
+    mat4 ViewXfm = CameraMatrix * InstanceTransform;
+    vertNormal = Normal;
+    texCoord = TexCoord;
+    flags = Flags;
+    gl_Position = ProjectionMatrix * ViewXfm * Position;
+}
 
-"out vec4 fragColor;"
+)SHADER";
 
-"void main(void)"
-"{"
-" vec3 color = vertNormal;"
-" if (!all(equal(color, abs(color)))) {"
-"   color = vec3(1.0) - abs(color);"
-" }"
-" fragColor = vec4(color, 1.0);"
-"}";
+static const char * FRAGMENT_SHADER = R"SHADER(#version 430
+
+uniform sampler2D sampler;
+
+in vec3 vertNormal;
+in vec2 texCoord;
+flat in uint flags;
+
+out vec4 fragColor;
+
+void main(void)
+{
+    if (flags > 0) {
+        fragColor = texture(sampler, texCoord);
+    } else {
+        vec3 color = vertNormal;
+        if (!all(equal(color, abs(color)))) {
+            color = vec3(1.0) - abs(color);
+        }
+        fragColor = vec4(color, 1.0);
+    }
+}
+
+)SHADER";
+
+
+#include <Resources.h>
+
+typedef std::shared_ptr<oglplus::Texture> TexturePtr;
+namespace oria {
+    extern TexturePtr load2dTexture(Resource resource);
+}
+
 
 // a class for encapsulating building and rendering an RGB cube
 struct ColorCubeScene {
@@ -944,13 +1029,15 @@ struct ColorCubeScene {
     GLuint instanceCount;
     oglplus::VertexArray vao;
     oglplus::Buffer instances;
+    oglplus::Buffer flags;
+    TexturePtr texture;
 
     // VBOs for the cube's vertices and normals
 
     const unsigned int GRID_SIZE{ 5 };
 
 public:
-    ColorCubeScene() : cube({ "Position", "Normal" }, oglplus::shapes::Cube()) {
+    ColorCubeScene(float ipd) : cube({ "Position", "Normal", "TexCoord" }, oglplus::shapes::Cube()) {
         using namespace oglplus;
         try {
             // attach the shaders to the program
@@ -965,6 +1052,7 @@ public:
                 .Compile()
                 );
             prog.Link();
+            texture = oria::load2dTexture(IMAGES_VALVE_HMD_CUBE_TEXTURE_PNG);
         } catch (ProgramBuildError & err) {
             FAIL((const char*)err.what());
         }
@@ -978,18 +1066,31 @@ public:
         // Create a cube of cubes
         {
             std::vector<mat4> instance_positions;
+            std::vector<uint32_t> instance_flags;
+            float startDist = -10 * ipd;
+            instance_positions.push_back(glm::translate(mat4(), vec3(0, 0, startDist)));
             for (unsigned int z = 0; z < GRID_SIZE; ++z) {
                 for (unsigned int y = 0; y < GRID_SIZE; ++y) {
                     for (unsigned int x = 0; x < GRID_SIZE; ++x) {
                         int xpos = (x - (GRID_SIZE / 2)) * 2;
                         int ypos = (y - (GRID_SIZE / 2)) * 2;
-                        int zpos = z * -2;
+                        int zpos = (z - (GRID_SIZE / 2)) * 2; 
                         vec3 relativePosition = vec3(xpos, ypos, zpos);
-                        instance_positions.push_back(glm::translate(glm::mat4(1.0f), relativePosition));
+                        mat4 xfm;
+                        xfm = glm::translate(mat4(), vec3(0, 0, startDist));
+                        xfm = glm::scale(xfm, vec3(ipd));
+                        xfm = glm::translate(xfm, relativePosition);
+                        instance_positions.push_back(xfm);
                     }
                 }
             }
-
+            instance_flags.resize(instance_positions.size());
+            instance_flags[0] = 1;
+            for (int i = 1; i < instance_flags.size(); ++i) {
+                if (i % 3 == 0) {
+                    instance_flags[i] = i;
+                }
+            }
             Context::Bound(Buffer::Target::Array, instances).Data(instance_positions);
             instanceCount = instance_positions.size();
             int stride = sizeof(mat4);
@@ -1000,30 +1101,37 @@ public:
                 instance_attr.Divisor(1);
                 instance_attr.Enable();
             }
+
+            {
+                Context::Bound(Buffer::Target::Array, flags).Data(instance_flags);
+                VertexArrayAttrib instance_attr(prog, Attribute::Flags);
+                instance_attr.Pointer(1, DataType::UnsignedInt, false, 0, (void*)0);
+                instance_attr.Divisor(1);
+                instance_attr.Enable();
+            }
         }
     }
 
     void render(const mat4 & projection, const mat4 & modelview) {
-        using namespace oglplus;
         prog.Use();
         typedef oglplus::Uniform<mat4> Mat4Uniform;
-        Mat4Uniform(prog, "ProjectionMatrix").Set(projection);
-        Mat4Uniform(prog, "CameraMatrix").Set(modelview);
+        texture->Bind(oglplus::Texture::Target::_2D);
+        Mat4Uniform(prog, Uniform::Projection).Set(projection);
+        Mat4Uniform(prog, Uniform::Modelview).Set(modelview);
         vao.Bind();
         cube.Draw(instanceCount);
     }
 };
 
-
 // An example application that renders a simple cube
 class ExampleApp : public RiftApp {
     std::shared_ptr<ColorCubeScene> cubeScene;
     float ipd{ OVR_DEFAULT_IPD };
-    mat4 modelview;
+    mat4 camera;
 
 public:
     ExampleApp() {
-        modelview = glm::lookAt(glm::vec3(0, 0, OVR_DEFAULT_IPD * 5.0f), glm::vec3(0), glm::vec3(0, 1, 0));
+        camera = glm::lookAt(vec3(), vec3(0, 0, -1), vec3(0, 1, 0));
     }
 
 protected:
@@ -1034,20 +1142,17 @@ protected:
         glDisable(GL_DITHER);
         glEnable(GL_DEPTH_TEST);
         ovrHmd_RecenterPose(hmd);
-        cubeScene = std::shared_ptr<ColorCubeScene>(new ColorCubeScene());
+        cubeScene = std::shared_ptr<ColorCubeScene>(new ColorCubeScene(ipd));
     }
 
     virtual void shutdownGl() {
         cubeScene.reset();
     }
 
-    void renderScene(const glm::mat4 & projection, const glm::mat4 & headPose) {
-        // Clear the scene
+    void renderScene(const mat4 & projection, const mat4 & headPose) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         // apply the head pose to the current modelview matrix
-        glm::mat4 modelview = glm::inverse(headPose) * this->modelview;
-        // Scale the size of the cube to the distance between the eyes
-        modelview = glm::scale(modelview, glm::vec3(ipd));
+        mat4 modelview = glm::inverse(headPose) * camera;
         cubeScene->render(projection, modelview);
     }
 };

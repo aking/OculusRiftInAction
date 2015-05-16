@@ -21,8 +21,6 @@
 
 #include "RiftRenderingApp.h"
 
-using EyeLayers = std::vector<ovrLayerEye_Union>;
-
 class RiftApp : public GlfwApp, RiftRenderingApp {
 protected:
   glm::mat4 player;

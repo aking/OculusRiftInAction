@@ -28,7 +28,7 @@ protected:
     mat4                projection;
   };
 
-  using EyeLayers = std::vector<ovrLayerEye_Union>;
+  using EyeLayers = std::vector<ovrLayer_Union>;
 
   EyeLayers     layers;
   uint32_t      frameCount{ 0 };
